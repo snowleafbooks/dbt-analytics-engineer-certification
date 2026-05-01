@@ -1,0 +1,73 @@
+name: 'dbtae_companion'
+version: '1.0.0'
+config-version: 2
+profile: 'dbtae_companion'
+
+require-dbt-version: [">=1.8.0", "<1.9.0"]
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+  - "logs"
+
+vars:
+  start_date: '2024-01-01'
+  force_test_fail: false
+
+on-run-start:
+  - "{{ log('Run started at ' ~ run_started_at ~ ' on target ' ~ target.name, info=true) }}"
+
+on-run-end:
+  - "{{ log('Run ended. ' ~ results | length ~ ' results emitted.', info=true) }}"
+
+query-comment:
+  comment: "{{ query_comment(node) }}"
+  append: true
+
+dispatch:
+  - macro_namespace: dbt_utils
+    search_order: ['dbtae_companion', 'dbt_utils']
+
+models:
+  dbtae_companion:
+    +persist_docs:
+      relation: true
+      columns: true
+    staging:
+      +materialized: view
+      +tags: ["staging"]
+    intermediate:
+      +materialized: ephemeral
+      +tags: ["intermediate"]
+    marts:
+      +materialized: table
+      +tags: ["marts"]
+      +grants:
+        select: ['analytics_reader']
+      +meta:
+        layer: gold
+
+seeds:
+  dbtae_companion:
+    +schema: reference
+    country_codes:
+      +column_types:
+        country_code: varchar(2)
+        country_name: varchar(60)
+    product_categories:
+      +quote_columns: true
+
+snapshots:
+  dbtae_companion:
+    +target_schema: snapshots
+
+data_tests:
+  +severity: error
+  +store_failures: false

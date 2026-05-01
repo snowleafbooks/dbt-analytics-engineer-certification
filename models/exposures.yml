@@ -1,0 +1,43 @@
+version: 2
+
+exposures:
+  - name: executive_kpi_dashboard
+    label: "Executive KPI Dashboard"
+    type: dashboard
+    maturity: high
+    url: "https://example.looker.com/dashboards/42"
+    description: "Revenue, order volume, and active-customer trends surfaced to the exec team."
+    depends_on:
+      - ref('fct_daily_sales')
+      - ref('fct_orders')
+    owner:
+      name: "BI Platform"
+      email: "bi@example.com"
+    tags: ["exec", "daily"]
+    meta:
+      sla_hours: 6
+
+  - name: ml_churn_model
+    label: "Churn prediction (v3)"
+    type: ml
+    maturity: medium
+    url: "https://example.mlflow.com/models/churn-v3"
+    description: "Batch-scored churn risk. Features pulled from dim_customer_segments v=2."
+    depends_on:
+      - ref('dim_customer_segments', v=2)
+      - ref('fct_segment_activity')
+    owner:
+      name: "Applied ML"
+      email: "ml@example.com"
+
+  - name: finance_reconciliation_notebook
+    label: "Finance month-end reconciliation"
+    type: analysis
+    maturity: low
+    description: "Monthly notebook used to reconcile fct_orders against the source-of-truth billing ledger."
+    depends_on:
+      - ref('fct_orders')
+      - ref('fct_order_items')
+    owner:
+      name: "Finance Engineering"
+      email: "finance-eng@example.com"

@@ -1,0 +1,12 @@
+* text=auto
+
+# Shell scripts and Linux-container files must stay LF regardless of OS
+*.sh text eol=lf
+.devcontainer/** text eol=lf
+
+# Binary / opaque formats — leave untouched
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary

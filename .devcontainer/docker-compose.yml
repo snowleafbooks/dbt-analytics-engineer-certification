@@ -1,0 +1,45 @@
+services:
+  dbt:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspaces/dbt-analytics-engineer-certification:cached
+      - dbt-home:/home/vscode/.dbt
+    command: sleep infinity
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: dbtae
+      POSTGRES_USER: dbt_developer
+      POSTGRES_PASSWORD: dbt_developer_pw
+      RAW_DATABASE: dbtae
+      RAW_SCHEMA_ECOM: raw_ecom
+      RAW_SCHEMA_REF: raw_ref
+      DBT_PROFILES_DIR: /home/vscode/.dbt
+
+  postgres:
+    image: postgres:15-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dbtae
+      POSTGRES_USER: dbt_developer
+      POSTGRES_PASSWORD: dbt_developer_pw
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ../db-init:/docker-entrypoint-initdb.d:ro
+      - ../data-seed:/data-seed:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbt_developer -d dbtae"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pg-data:
+  dbt-home:

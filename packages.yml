@@ -1,0 +1,29 @@
+packages:
+  - package: dbt-labs/dbt_utils
+    version: [">=1.2.0", "<2.0.0"]
+
+  - package: metaplane/dbt_expectations
+    version: "0.10.4"
+    # pulls in calogica/dbt_date >=0.9.0,<1.0.0 transitively — you'll see dbt_date
+    # in package-lock.yml and in dbt_packages/ after `dbt deps`; that's expected.
+
+  - package: dbt-labs/audit_helper
+    version: "0.12.1"
+
+  - package: dbt-labs/codegen
+    version: "0.12.1"
+
+  # Example: git source shape (uncomment to try)
+  # - git: "https://github.com/dbt-labs/dbt-project-evaluator.git"
+  #   revision: "v0.14.0"
+
+  # Example: local source shape (uncomment if a sibling shared_pkg exists)
+  # - local: ../shared_pkg
+
+  # Example: tarball source shape (needs a tarball URL)
+  # - tarball: "https://example.com/path/to/package.tar.gz"
+  #   name: "my_tarball_pkg"
+
+  # Example: private source shape (needs git auth)
+  # - private: "my-org/my-private-pkg"
+  #   revision: "main"

@@ -1,0 +1,83 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: "One row per customer with normalised column names and surrogate key."
+    columns:
+      - name: customer_pk
+        description: "Surrogate key (sha256 of customer_id)."
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: "Natural key from raw_ecom.customers."
+        data_tests: [unique, not_null]
+      - name: email
+        description: "{{ doc('pii_email') }}"
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              regex: "^[^@]+@[^@]+\\.[^@]+$"
+      - name: country_code
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('country_codes')
+              field: country_code
+
+  - name: stg_products
+    description: "One row per product."
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+      - name: sku
+        data_tests: [unique, not_null]
+      - name: price_usd
+        description: "Unit price converted from cents to USD."
+        data_tests:
+          - not_null
+
+  - name: stg_orders
+    description: "One row per order. Refactored column names and currency normalisation."
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_customers')
+              field: customer_id
+      - name: status
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['pending', 'paid', 'shipped', 'delivered', 'refunded', 'cancelled']
+
+  - name: stg_order_items
+    description: "One row per order line."
+    columns:
+      - name: order_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_orders')
+              field: order_id
+      - name: product_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_products')
+              field: product_id
+
+  - name: stg_audit_events
+    description: "Append-only event stream for incremental demo."
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+
+  - name: stg_currency_rates
+    description: "Currency to USD conversion rates."
+    columns:
+      - name: currency_code
+        data_tests: [unique, not_null]
+      - name: usd_per_unit
+        data_tests: [not_null]

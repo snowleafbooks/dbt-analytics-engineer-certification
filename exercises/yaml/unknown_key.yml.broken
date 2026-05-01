@@ -1,0 +1,7 @@
+version: 2
+
+models:
+  - name: fct_orders
+    frobulate: enthusiastically
+    columns:
+      - name: order_id

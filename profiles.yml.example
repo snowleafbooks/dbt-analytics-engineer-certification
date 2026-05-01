@@ -1,0 +1,23 @@
+dbtae_companion:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'postgres') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      user: "{{ env_var('POSTGRES_USER', 'dbt_developer') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'dbt_developer_pw') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'dbtae') }}"
+      schema: dev
+      threads: 4
+      sslmode: disable
+    ci:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'postgres') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      user: "{{ env_var('POSTGRES_USER', 'dbt_developer') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'dbt_developer_pw') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'dbtae') }}"
+      schema: ci
+      threads: 2
+      sslmode: disable

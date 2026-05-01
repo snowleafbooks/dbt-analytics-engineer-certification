@@ -1,0 +1,11 @@
+version: 2
+
+models:
+  - name: contract_drift
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: order_id
+        data_type: integer
+      - name: status
+        data_type: varchar(20)

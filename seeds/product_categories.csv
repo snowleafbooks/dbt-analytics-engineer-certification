@@ -1,0 +1,7 @@
+category_id,category_name,parent_name
+1,apparel,
+2,footwear,
+3,accessories,apparel
+4,home,
+5,electronics,
+6,outdoors,

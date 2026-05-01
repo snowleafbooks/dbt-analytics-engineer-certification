@@ -1,0 +1,37 @@
+{
+  "name": "dbt AE Companion (Postgres)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "dbt",
+  "workspaceFolder": "/workspaces/dbt-analytics-engineer-certification",
+  "remoteUser": "vscode",
+  "shutdownAction": "stopCompose",
+  "forwardPorts": [5432, 8080],
+  "portsAttributes": {
+    "5432": { "label": "Postgres" },
+    "8080": { "label": "dbt docs serve" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "innoverio.vscode-dbt-power-user",
+        "samuelcolvin.jinjahtml",
+        "redhat.vscode-yaml",
+        "ms-python.python",
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-pg"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "dbt.dbtIntegration": "core",
+        "dbt.profilesDirOverride": "/home/vscode/.dbt",
+        "files.associations": {
+          "*.sql": "jinja-sql",
+          "*.yml": "yaml",
+          "*.yaml": "yaml"
+        }
+      }
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "bash .devcontainer/post-start.sh"
+}

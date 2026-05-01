@@ -1,0 +1,17 @@
+version: 2
+
+groups:
+  - name: pii
+    owner:
+      name: "Data Privacy"
+      email: "privacy@example.com"
+
+  - name: marketing
+    owner:
+      name: "Marketing Analytics"
+      email: "marketing-analytics@example.com"
+
+  - name: finance
+    owner:
+      name: "Finance Engineering"
+      email: "finance-eng@example.com"

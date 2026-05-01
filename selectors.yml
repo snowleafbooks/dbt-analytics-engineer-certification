@@ -1,0 +1,26 @@
+selectors:
+  - name: nightly_core
+    description: "Core marts refreshed nightly — excludes staging views and PII models."
+    definition:
+      union:
+        - method: tag
+          value: marts
+        - method: tag
+          value: critical
+        - exclude:
+            - method: group
+              value: pii
+
+  - name: slim_ci
+    description: "Canonical slim-CI selector: modified nodes + their descendants."
+    definition:
+      method: state
+      value: modified
+      children: true
+
+  - name: critical_only
+    description: "Only nodes tagged `critical` (used for pager-duty smoke runs)."
+    default: false
+    definition:
+      method: tag
+      value: critical

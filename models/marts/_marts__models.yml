@@ -1,0 +1,262 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: "Customer dimension with country enrichment and lifetime order stats."
+    config:
+      tags: ["customers"]
+    columns:
+      - name: customer_pk
+        description: "Surrogate key (inherited from stg_customers)."
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: "Natural key."
+        data_tests: [unique, not_null]
+      - name: email
+        description: "{{ doc('pii_email') }}"
+        data_tests: [not_null]
+      - name: country_code
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('country_codes')
+              field: country_code
+      - name: orders_lifetime_count
+        data_tests: [not_null]
+      - name: orders_lifetime_usd
+        data_tests: [not_null]
+
+  - name: dim_products
+    description: "Product dimension with contract enforcement. Demonstrates every constraint type supported by Postgres."
+    config:
+      contract: {enforced: true}
+    constraints:
+      - type: primary_key
+        columns: [product_id]
+    columns:
+      - name: product_id
+        data_type: integer
+        constraints:
+          - type: not_null
+      - name: sku
+        data_type: varchar(40)
+        constraints:
+          - type: not_null
+          - type: unique
+      - name: product_name
+        data_type: varchar(120)
+        constraints:
+          - type: not_null
+      - name: category_id
+        data_type: integer
+      - name: category_name
+        data_type: varchar(60)
+      - name: price_cents
+        data_type: integer
+        constraints:
+          - type: not_null
+          - type: check
+            expression: "price_cents >= 0"
+      - name: price_usd
+        data_type: numeric(12, 2)
+        constraints:
+          - type: not_null
+      - name: is_active
+        data_type: boolean
+
+  - name: dim_pii_customers
+    description: "PII-restricted customer attributes. Only models in group `pii` may ref()."
+    config:
+      access: private
+      group: pii
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+      - name: email
+        data_tests: [not_null]
+
+  - name: dim_customer_segments
+    description: "Customer segmentation dimension. Two versions in active use; v1 deprecating."
+    latest_version: 2
+    config:
+      contract: {enforced: true}
+      group: marketing
+    columns:
+      - name: customer_id
+        data_type: integer
+        constraints:
+          - type: not_null
+          - type: unique
+    versions:
+      - v: 1
+        defined_in: dim_customer_segments_v1
+        deprecation_date: '2025-12-31 00:00:00-00:00'
+        columns:
+          - name: customer_id
+            data_type: integer
+            constraints:
+              - type: not_null
+              - type: unique
+          - name: segment
+            data_type: varchar(10)
+            constraints:
+              - type: not_null
+      - v: 2
+        defined_in: dim_customer_segments_v2
+        columns:
+          - name: customer_id
+            data_type: integer
+            constraints:
+              - type: not_null
+              - type: unique
+          - name: spend_segment
+            data_type: varchar(10)
+            constraints:
+              - type: not_null
+          - name: recency_segment
+            data_type: varchar(10)
+            constraints:
+              - type: not_null
+          - name: orders_lifetime_count
+            data_type: integer
+          - name: orders_lifetime_usd
+            data_type: numeric(14, 2)
+          - name: latest_order_at
+            data_type: timestamp
+
+  - name: fct_orders
+    description: "Orders fact table — one row per order. Incremental (delete+insert). Deliberately triggers a failing test when `force_test_fail` var is true."
+    config:
+      tags: ["daily", "critical"]
+    columns:
+      - name: order_id
+        description: "Primary key."
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_id
+      - name: status
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['pending', 'paid', 'shipped', 'delivered', 'refunded', 'cancelled']
+              config:
+                severity: warn
+      - name: order_total_usd
+        data_tests:
+          - not_null
+          - value_in_range:
+              min_value: 0
+              max_value: 100000
+      - name: updated_at
+        data_tests:
+          - not_null:
+              config:
+                where: "created_at >= current_date - interval '90 days'"
+    data_tests:
+      - dbt_utils.expression_is_true:
+          expression: "order_total_cents = order_total * 100"
+          config:
+            severity: warn
+      # Flip-switch test: only runs when {{ var('force_test_fail') }} is true
+      - dbt_utils.expression_is_true:
+          expression: "1 = 0"
+          config:
+            enabled: "{{ var('force_test_fail', false) }}"
+            severity: error
+
+  - name: fct_order_items
+    description: "Line-level fact. Incremental merge. Composite key."
+    columns:
+      - name: order_id
+        data_tests: [not_null]
+      - name: line_no
+        data_tests: [not_null]
+      - name: product_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_products')
+              field: product_id
+
+  - name: fct_daily_sales
+    description: "Daily sales rollup."
+    columns:
+      - name: sales_day
+        data_tests: [unique, not_null]
+      - name: revenue_usd
+        data_tests: [not_null]
+
+  - name: fct_audit_events
+    description: "Append-only audit events. Incremental append strategy."
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+
+  - name: fct_segment_activity
+    description: "Consumes dim_customer_segments v=1 — demonstrates versioned ref()."
+    config:
+      group: marketing
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+
+# Unit tests (dbt 1.8+) — assertion on the model's SQL logic with mock rows.
+unit_tests:
+  - name: test_fct_orders_usd_conversion
+    description: "Verify that a 100-unit EUR order is correctly converted using the fixture rate."
+    model: fct_orders
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_orders')
+        format: csv
+        rows: |
+          order_id,customer_id,status,currency,order_total_cents,order_total,created_at,updated_at,loaded_at
+          9001,1,paid,EUR,10000,100.00,2025-06-01 10:00:00,2025-06-01 10:00:00,2025-06-01 10:00:00
+      - input: ref('dim_customers')
+        format: csv
+        rows: |
+          customer_id,country_code,country_name
+          1,DE,Germany
+      - input: ref('stg_currency_rates')
+        format: csv
+        rows: |
+          currency_code,usd_per_unit
+          EUR,1.10
+    expect:
+      format: csv
+      rows: |
+        order_id,order_total_usd
+        9001,110.00
+
+  - name: test_fct_orders_no_rate_match_defaults_to_one
+    description: "When the currency has no rate match, multiplication falls back to 1.0."
+    model: fct_orders
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_orders')
+        format: csv
+        rows: |
+          order_id,customer_id,status,currency,order_total_cents,order_total,created_at,updated_at,loaded_at
+          9002,2,paid,XYZ,5000,50.00,2025-06-01 00:00:00,2025-06-01 00:00:00,2025-06-01 00:00:00
+      - input: ref('dim_customers')
+        format: csv
+        rows: |
+          customer_id,country_code,country_name
+          2,US,United States
+      - input: ref('stg_currency_rates')
+        format: csv
+        rows: |
+          currency_code,usd_per_unit
+    expect:
+      format: csv
+      rows: |
+        order_id,order_total_usd
+        9002,50.00

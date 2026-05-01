@@ -1,0 +1,102 @@
+version: 2
+
+sources:
+  - name: raw_ecom
+    description: "E-commerce application landing tables. One row per business event, timestamped as it arrives."
+    database: "{{ env_var('RAW_DATABASE', 'dbtae') }}"
+    schema: "{{ env_var('RAW_SCHEMA_ECOM', 'raw_ecom') }}"
+    loaded_at_field: loaded_at
+    freshness:
+      warn_after: {count: 12, period: hour}
+      error_after: {count: 24, period: hour}
+    tables:
+      - name: customers
+        description: "Customer master — one row per registered account."
+        columns:
+          - name: customer_id
+            description: "Primary key of the customers table."
+            data_tests:
+              - unique
+              - not_null
+          - name: email
+            description: "Customer email. Unique at source; used for account recovery."
+            data_tests:
+              - not_null
+          - name: country_code
+            description: "ISO 3166-1 alpha-2."
+      - name: product_catalog
+        description: "Product catalog. One row per SKU. Demonstrates `identifier:` — the dbt-facing name here is `product_catalog` but the warehouse table is `raw_ecom.products`."
+        identifier: products
+        columns:
+          - name: product_id
+            data_tests:
+              - unique
+              - not_null
+          - name: sku
+            data_tests:
+              - unique
+              - not_null
+      - name: orders
+        description: "Orders placed via the storefront."
+        freshness:
+          warn_after: {count: 6, period: hour}
+          error_after: {count: 12, period: hour}
+        columns:
+          - name: order_id
+            data_tests:
+              - unique
+              - not_null
+          - name: customer_id
+            data_tests:
+              - not_null
+              - relationships:
+                  to: source('raw_ecom', 'customers')
+                  field: customer_id
+          - name: status
+            data_tests:
+              - not_null
+              - accepted_values:
+                  values: ['pending', 'paid', 'shipped', 'delivered', 'refunded', 'cancelled']
+      - name: order_items
+        description: "Line items per order. Composite key (order_id, line_no)."
+        columns:
+          - name: order_id
+            data_tests:
+              - not_null
+              - relationships:
+                  to: source('raw_ecom', 'orders')
+                  field: order_id
+          - name: product_id
+            data_tests:
+              - not_null
+              - relationships:
+                  to: source('raw_ecom', 'product_catalog')
+                  field: product_id
+      - name: audit_events
+        description: "Append-only audit log. Used as the canonical `incremental_strategy='append'` source."
+        freshness: null
+        columns:
+          - name: event_id
+            data_tests:
+              - unique
+              - not_null
+
+  - name: raw_ref
+    description: "Reference data supplied by upstream systems (non-seed) — shares the same database as raw_ecom but lives in a different schema."
+    database: "{{ env_var('RAW_DATABASE', 'dbtae') }}"
+    schema: "{{ env_var('RAW_SCHEMA_REF', 'raw_ref') }}"
+    loaded_at_field: loaded_at
+    freshness:
+      warn_after: {count: 3, period: day}
+      error_after: {count: 7, period: day}
+    tables:
+      - name: currency_rates
+        description: "Per-currency conversion rate to USD as of `rate_as_of`."
+        columns:
+          - name: currency_code
+            data_tests:
+              - unique
+              - not_null
+          - name: usd_per_unit
+            data_tests:
+              - not_null

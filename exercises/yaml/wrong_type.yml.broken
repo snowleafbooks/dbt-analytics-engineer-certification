@@ -1,0 +1,6 @@
+version: 2
+
+models:
+  - name: fct_orders
+    config:
+      materialized: true

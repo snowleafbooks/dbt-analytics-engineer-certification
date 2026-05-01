@@ -1,0 +1,26 @@
+target/
+dbt_packages/
+logs/
+prior-artifacts/
+.venv/
+.env
+.dbt/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+.vscode/
+.idea/
+.claude/
+.codex
+
+# dbt credentials — only the .example variant should be committed
+profiles.yml
+
+# Book-internal drafts
+.build/
+
+# JS / notebook noise
+node_modules/
+.ipynb_checkpoints/
+
