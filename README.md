@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT license">
 </p>
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new/?quickstart=1&repo=snowleafpress%2Fdbt-analytics-engineer-certification)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new/?quickstart=1&repo=snowleafbooks%2Fdbt-analytics-engineer-certification)
 
 ---
 
@@ -112,7 +112,7 @@ If `docker ps` errors with "Cannot connect to the Docker daemon", Docker Desktop
 ### Option A — VS Code Dev Container (recommended)
 
 ```bash
-git clone https://github.com/snowleafpress/dbt-analytics-engineer-certification.git
+git clone https://github.com/snowleafbooks/dbt-analytics-engineer-certification.git
 cd dbt-analytics-engineer-certification
 code .
 ```
