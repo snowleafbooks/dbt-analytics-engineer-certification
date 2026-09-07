@@ -1,4 +1,13 @@
-{# Table materialization (inherited from folder +materialized). Dispatch-resolved surrogate key. #}
+{#
+    Table materialization (inherited from folder +materialized). Dispatch-resolved surrogate key.
+
+    The lifetime aggregates below apply the same future-order rule as fct_orders. This
+    model reads stg_orders directly -- it cannot ref() fct_orders, because fct_orders
+    ref()s this model for country enrichment and that would be a cycle -- so the rule is
+    restated here rather than inherited. Without it, `latest_order_at` would be the date of
+    a *scheduled* order, and dim_customer_segments_v2 would band a long-dormant customer as
+    `active` on the strength of an order that has not happened yet.
+#}
 with customers as (
     select * from {{ ref('stg_customers') }}
 ),
@@ -13,6 +22,7 @@ orders as (
         min(created_at)                        as first_order_at,
         max(created_at)                        as latest_order_at
     from {{ ref('stg_orders') }}
+    where created_at <= {{ dbt.current_timestamp() }}
     group by 1
 )
 

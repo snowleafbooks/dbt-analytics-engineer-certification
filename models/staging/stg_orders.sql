@@ -1,3 +1,10 @@
+{# 
+    `event_time` marks the column dbt uses to slice this relation into time windows.
+    It does nothing on an ordinary run; it is consumed by microbatch models downstream
+    and by `--sample`. See models/marts/fct_orders_microbatch.sql.
+#}
+{{ config(event_time='created_at') }}
+
 with source as (
     select * from {{ source('raw_ecom', 'orders') }}
 ),

@@ -1,0 +1,2 @@
+order_id,customer_id,status,currency,order_total_cents,order_total,created_at,updated_at,loaded_at
+9001,1,paid,EUR,10000,100.00,2025-06-01 10:00:00,2025-06-01 10:00:00,2025-06-01 10:00:00

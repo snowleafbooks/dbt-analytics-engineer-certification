@@ -13,9 +13,10 @@ exposures:
     owner:
       name: "BI Platform"
       email: "bi@example.com"
-    tags: ["exec", "daily"]
-    meta:
-      sla_hours: 6
+    config:
+      tags: ["exec", "daily"]
+      meta:
+        sla_hours: 6
 
   - name: ml_churn_model
     label: "Churn prediction (v3)"
@@ -38,6 +39,11 @@ exposures:
     depends_on:
       - ref('fct_orders')
       - ref('fct_order_items')
+      # `depends_on` takes source() as well as ref() -- the reconciliation notebook reads
+      # the raw billing feed directly, so the exposure carries a source edge. A third call
+      # type, metric(), also parses; it needs a MetricFlow metric, which is out of scope
+      # here (adding metric('x') yields "depends on a metric named 'x' which was not found").
+      - source('raw_ecom', 'orders')
     owner:
       name: "Finance Engineering"
       email: "finance-eng@example.com"

@@ -2,13 +2,23 @@ version: 2
 
 sources:
   - name: raw_ecom
-    description: "E-commerce application landing tables. One row per business event, timestamped as it arrives."
+    description: >
+      E-commerce application landing tables. One row per business event, timestamped as it
+      arrives.
+
+      Populated from data-seed/*.csv, which scripts/generate_data.py cuts relative to an
+      anchor date rather than to fixed calendar dates: business timestamps run from ~600 days
+      before the anchor to ~760 days after it, and `loaded_at` is the business timestamp plus
+      a 1-6 hour ingestion jitter. That forward runway is why `source freshness` passes on a
+      fresh clone. To see the stale outcome instead, run scripts/force_stale.sql, and
+      scripts/restore_freshness.sql to put it back. See data-seed/GENERATED.md.
     database: "{{ env_var('RAW_DATABASE', 'dbtae') }}"
     schema: "{{ env_var('RAW_SCHEMA_ECOM', 'raw_ecom') }}"
-    loaded_at_field: loaded_at
-    freshness:
-      warn_after: {count: 12, period: hour}
-      error_after: {count: 24, period: hour}
+    config:
+      loaded_at_field: loaded_at
+      freshness:
+        warn_after: {count: 12, period: hour}
+        error_after: {count: 24, period: hour}
     tables:
       - name: customers
         description: "Customer master — one row per registered account."
@@ -27,6 +37,25 @@ sources:
       - name: product_catalog
         description: "Product catalog. One row per SKU. Demonstrates `identifier:` — the dbt-facing name here is `product_catalog` but the warehouse table is `raw_ecom.products`."
         identifier: products
+        config:
+          # `loaded_at_query` (1.10+) is the FULL ALTERNATIVE to `loaded_at_field`: dbt runs
+          # this SQL instead of `select max(<field>)`. It overrides the source-level
+          # `loaded_at_field: loaded_at` for this table only. On this fixture it returns the
+          # same instant the field route would -- the point is the route, not the value. The
+          # observable proof: delete the source-level `loaded_at_field` and every other table
+          # errors with "The configured adapter does not support metadata-based freshness",
+          # while this one still reports PASS.
+          #
+          # THE RELATION IS RENDERED, NOT TYPED OUT. `loaded_at_query` is raw SQL: dbt does not
+          # resolve it against the source, so a hardcoded `raw_ecom.products` keeps pointing at
+          # `raw_ecom` after `RAW_SCHEMA_ECOM` has moved the source somewhere else, and freshness
+          # then reports on a table this project is not reading. Measured, 2026-09-06: with the
+          # source pointed at an alternate schema whose newest load was 2000-01-01, the hardcoded
+          # form still passed on the original 2028 timestamp. The env_var expressions below are
+          # the same ones `database:` and `schema:` use above, so the query follows the source.
+          loaded_at_query: >-
+            select max(loaded_at)
+            from "{{ env_var('RAW_DATABASE', 'dbtae') }}"."{{ env_var('RAW_SCHEMA_ECOM', 'raw_ecom') }}"."products"
         columns:
           - name: product_id
             data_tests:
@@ -37,10 +66,17 @@ sources:
               - unique
               - not_null
       - name: orders
-        description: "Orders placed via the storefront."
-        freshness:
-          warn_after: {count: 6, period: hour}
-          error_after: {count: 12, period: hour}
+        description: >
+          Orders placed via the storefront, including scheduled and pre-ordered rows whose
+          `created_at` is still in the future. Nothing filters those out at this layer;
+          `fct_orders` applies that business rule at the mart boundary.
+        # `event_time` is what makes `--sample` and downstream microbatch models able to
+        # slice this relation by time. Without it, `--sample` silently returns every row.
+        config:
+          event_time: created_at
+          freshness:
+            warn_after: {count: 6, period: hour}
+            error_after: {count: 12, period: hour}
         columns:
           - name: order_id
             data_tests:
@@ -50,13 +86,23 @@ sources:
             data_tests:
               - not_null
               - relationships:
-                  to: source('raw_ecom', 'customers')
-                  field: customer_id
+                  arguments:
+                    to: source('raw_ecom', 'customers')
+                    field: customer_id
           - name: status
             data_tests:
               - not_null
               - accepted_values:
-                  values: ['pending', 'paid', 'shipped', 'delivered', 'refunded', 'cancelled']
+                  arguments:
+                    values: ['pending', 'paid', 'shipped', 'delivered', 'refunded', 'cancelled']
+          - name: created_at
+            description: >
+              When the order was placed. Spans roughly two years either side of the
+              generation anchor — future values are scheduled orders, not bad data.
+          - name: loaded_at
+            description: >
+              When the row landed in the warehouse: its business timestamp plus a 1-6 hour
+              ingestion jitter. This is the column `freshness` measures against `now()`.
       - name: order_items
         description: "Line items per order. Composite key (order_id, line_no)."
         columns:
@@ -64,17 +110,24 @@ sources:
             data_tests:
               - not_null
               - relationships:
-                  to: source('raw_ecom', 'orders')
-                  field: order_id
+                  arguments:
+                    to: source('raw_ecom', 'orders')
+                    field: order_id
           - name: product_id
             data_tests:
               - not_null
               - relationships:
-                  to: source('raw_ecom', 'product_catalog')
-                  field: product_id
+                  arguments:
+                    to: source('raw_ecom', 'product_catalog')
+                    field: product_id
       - name: audit_events
-        description: "Append-only audit log. Used as the canonical `incremental_strategy='append'` source."
-        freshness: null
+        description: >
+          Append-only audit log. The canonical `incremental_strategy='append'` source, with at
+          least one event on every calendar day the fixture covers. `event_id` ascends with
+          `occurred_at`, which is what lets the downstream append model use `id > max(id)` as
+          a watermark.
+        config:
+          freshness: null
         columns:
           - name: event_id
             data_tests:
@@ -85,13 +138,27 @@ sources:
     description: "Reference data supplied by upstream systems (non-seed) — shares the same database as raw_ecom but lives in a different schema."
     database: "{{ env_var('RAW_DATABASE', 'dbtae') }}"
     schema: "{{ env_var('RAW_SCHEMA_REF', 'raw_ref') }}"
-    loaded_at_field: loaded_at
-    freshness:
-      warn_after: {count: 3, period: day}
-      error_after: {count: 7, period: day}
+    config:
+      loaded_at_field: loaded_at
+      freshness:
+        warn_after: {count: 3, period: day}
+        error_after: {count: 7, period: day}
     tables:
       - name: currency_rates
-        description: "Per-currency conversion rate to USD as of `rate_as_of`."
+        config:
+          freshness:
+            # `filter` is a WHERE fragment applied ALONGSIDE `loaded_at_field`, to limit what
+            # the freshness query scans. It is not an alternative to the field (that is
+            # `loaded_at_query`, on product_catalog above). Only `filter` is set here, and the
+            # source-level `warn_after` / `error_after` still apply -- table-level freshness
+            # config MERGES with the source-level block rather than replacing it. Proof, in
+            # target/sources.json after `dbt source freshness`: this table's `criteria` keeps
+            # 3d/7d AND records the filter, and `max_loaded_at` moves back off the GBP row.
+            filter: "currency_code in ('USD', 'EUR', 'AUD')"
+        description: >
+          Per-currency conversion rate to USD as of `rate_as_of`. One row per currency — a
+          current-rate lookup, not a rate history, which is why `currency_code` alone is
+          unique and is a safe join key for `fct_orders`.
         columns:
           - name: currency_code
             data_tests:

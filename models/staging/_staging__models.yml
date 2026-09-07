@@ -5,7 +5,7 @@ models:
     description: "One row per customer with normalised column names and surrogate key."
     columns:
       - name: customer_pk
-        description: "Surrogate key (sha256 of customer_id)."
+        description: "{{ doc('surrogate_key_convention') }}"
         data_tests: [unique, not_null]
       - name: customer_id
         description: "Natural key from raw_ecom.customers."
@@ -15,13 +15,15 @@ models:
         data_tests:
           - not_null
           - dbt_expectations.expect_column_values_to_match_regex:
-              regex: "^[^@]+@[^@]+\\.[^@]+$"
+              arguments:
+                regex: "^[^@]+@[^@]+\\.[^@]+$"
       - name: country_code
         data_tests:
           - not_null
           - relationships:
-              to: ref('country_codes')
-              field: country_code
+              arguments:
+                to: ref('country_codes')
+                field: country_code
 
   - name: stg_products
     description: "One row per product."
@@ -36,7 +38,17 @@ models:
           - not_null
 
   - name: stg_orders
-    description: "One row per order. Refactored column names and currency normalisation."
+    description: >
+      One row per order. Refactored column names and currency normalisation.
+
+      Deliberately unfiltered: the raw feed carries scheduled and pre-ordered rows whose
+      `created_at` is in the future, and this model keeps every one of them. Staging renames,
+      recasts and derives — it does not adjudicate what counts as a real order. That business
+      rule lives one layer up, in `fct_orders`, and `assert_no_future_orders` asserts it there.
+      Any test written here must therefore tolerate future-dated rows.
+
+      `event_time: created_at` is declared in the model file; it is what lets `--sample` and
+      the downstream microbatch model slice this relation by time.
     columns:
       - name: order_id
         data_tests: [unique, not_null]
@@ -44,40 +56,123 @@ models:
         data_tests:
           - not_null
           - relationships:
-              to: ref('stg_customers')
-              field: customer_id
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
       - name: status
+        description: "{{ doc('order_status') }}"
         data_tests:
           - not_null
           - accepted_values:
-              values: ['pending', 'paid', 'shipped', 'delivered', 'refunded', 'cancelled']
+              arguments:
+                values: ['pending', 'paid', 'shipped', 'delivered', 'refunded', 'cancelled']
 
   - name: stg_order_items
-    description: "One row per order line."
+    description: >
+      One row per order line.
+
+      NO `event_time` HERE, AND THAT HAS A CONSEQUENCE UNDER `--sample`.
+      `raw_ecom.order_items` carries no business timestamp -- only `loaded_at`, an
+      ingestion clock -- so there is nothing this model could honestly declare as its event
+      time. `raw_ecom.orders` does declare one, so under `dbt build --sample '<n> days'`
+      the parent is sliced to the sample window and these lines are not, and the
+      `relationships` test below then reports nearly every line as an orphan (about 10,360
+      of 10,386 on a 3-day sample -- the exact numerator moves with the clock). That is
+      sample mode reporting the truth about a partial dataset, not a broken test.
+
+      Measured, so the trade-off is not a guess: putting `event_time: loaded_at` on the
+      source cuts the orphans to roughly two dozen rather than to zero, because the two
+      sides are then sliced on different clocks -- an order's `created_at` versus its
+      lines' ingestion time, which the fixture offsets by a 1-6 hour jitter. It also makes
+      a false claim about the data. The test is left alone.
+
+      What to run instead:
+        dbt run --sample '3 days'                          # sampling demo, no tests
+        dbt build --sample '3 days'           --exclude relationships_stg_order_items_order_id__order_id__ref_stg_orders_
+                       # Done. PASS=116 WARN=0 ERROR=0 SKIP=0 NO-OP=3 TOTAL=119
+      Neutering the test to make one command green would trade a real invariant for a
+      cosmetic exit code.
     columns:
       - name: order_id
         data_tests:
           - not_null
           - relationships:
-              to: ref('stg_orders')
-              field: order_id
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
       - name: product_id
         data_tests:
           - not_null
           - relationships:
-              to: ref('stg_products')
-              field: product_id
+              arguments:
+                to: ref('stg_products')
+                field: product_id
 
   - name: stg_audit_events
-    description: "Append-only event stream for incremental demo."
+    description: >
+      Append-only event stream for the incremental demo. In the `dev` and `ci` targets the
+      `limit_data_in_dev` macro trims this to the last 30 days; in `prod` it returns the full
+      stream. The fixture guarantees at least one event on every calendar day it covers, so
+      that 30-day window is never empty — an empty window would still pass `unique` and
+      `not_null`, which is exactly how this kind of decay hides.
     columns:
       - name: event_id
         data_tests: [unique, not_null]
 
   - name: stg_currency_rates
-    description: "Currency to USD conversion rates."
+    description: >
+      Currency to USD conversion rate — one row per currency, not a rate history. `rate_as_of`
+      records the date the rate is stated for; it covers the whole span of the order data.
     columns:
       - name: currency_code
         data_tests: [unique, not_null]
       - name: usd_per_unit
         data_tests: [not_null]
+
+unit_tests:
+  - name: test_stg_customers_override_reaches_nested_macro
+    description: >
+      OVERRIDES ARE TRANSITIVE. `overrides.macros` substitutes the named macro wherever it is
+      resolved while the unit test runs — including inside macros the model calls indirectly.
+      The model does not have to name the overridden macro, and here it does not.
+
+
+      THE CALL CHAIN. stg_customers names exactly one macro,
+      `dbt_utils.generate_surrogate_key`. That macro dispatches to this project's own
+      `default__generate_surrogate_key` (macros/generate_surrogate_key.sql), and THAT macro
+      calls `dbt.type_string()` to build the cast inside each `coalesce(lower(trim(...)))`.
+      The override below names `dbt.type_string` — two calls down, in a file stg_customers.sql
+      never mentions.
+
+
+      WHAT MAKES IT OBSERVABLE. Overriding the string type with `varchar(1)` truncates the
+      cast: customer_id 42 becomes '4' before it is hashed, so `customer_pk` is md5('4') =
+      a87ff679a2f3e71d9181a67b7542122c. Without the override the same row hashes md5('42') =
+      a1d0c6e83f027327d8461063f4ac58a6, which is what this test reports as the actual value if
+      you delete the two override lines and re-run. Both hashes are checkable by hand:
+      `select md5('4'), md5('42');`
+
+
+      THE LIMIT OF THE MECHANISM, verified 2026-09-03 on dbt-core 1.11.14 and NOT shipped as a
+      fixture. An override replaces a NAME in the render context; it does not intercept
+      `adapter.dispatch`. A unit test on fct_daily_sales overriding `postgres__date_trunc_day`
+      — the implementation dispatch picks, which the model likewise never names — leaves the
+      real macro running and the test reports the untouched value, while overriding
+      `date_trunc_day`, the name the model does write, takes effect. So the reachable surface
+      is every macro resolved by name in the chain, and the dispatch step is where the
+      substitution stops.
+    model: stg_customers
+    overrides:
+      macros:
+        dbt.type_string: "varchar(1)"
+    given:
+      - input: source('raw_ecom', 'customers')
+        format: csv
+        rows: |
+          customer_id,email,first_name,last_name,country_code,address_line_1,city,postal_code,signed_up_at,updated_at,loaded_at
+          42,ADA@Example.COM,Ada,Lovelace,GB,1 Main St,London,E1 6AN,2025-01-01 00:00:00,2025-01-02 00:00:00,2025-01-03 00:00:00
+    expect:
+      format: csv
+      rows: |
+        customer_pk,customer_id,email,first_name,last_name,country_code,address_line_1,city,postal_code,signed_up_at,updated_at,loaded_at
+        a87ff679a2f3e71d9181a67b7542122c,42,ada@example.com,Ada,Lovelace,GB,1 Main St,London,E1 6AN,2025-01-01 00:00:00,2025-01-02 00:00:00,2025-01-03 00:00:00

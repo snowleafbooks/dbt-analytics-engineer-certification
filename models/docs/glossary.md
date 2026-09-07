@@ -16,9 +16,16 @@ Downstream facts should preserve this exact vocabulary.
 {% enddocs %}
 
 {% docs surrogate_key_convention %}
-Surrogate keys are sha256 hex digests generated via `dbt_utils.generate_surrogate_key`
-with the project-level dispatch override (`dbtae_companion__generate_surrogate_key`).
+Surrogate keys are md5 hex digests generated via `dbt_utils.generate_surrogate_key`,
+resolved through this project's dispatch override in `macros/generate_surrogate_key.sql`.
 
-The override is a drop-in replacement that pins the hash algorithm to `sha256` for
-cross-adapter determinism.
+The override is a drop-in replacement whose behavioural difference is *normalisation*,
+not the hash primitive: every field is lower-cased and trimmed before hashing, so casing or
+whitespace drift at source does not produce a new key. The primitive remains `md5`, emitted
+directly as a literal `md5(...)` call. It is the `dbt_utils` default implementation that
+reaches the primitive through `dbt.hash()`; this override does not.
+
+The override wins because it is named `default__generate_surrogate_key`, which is one of the
+two names `adapter.dispatch` searches for. A macro named after the package
+(`dbtae_companion__generate_surrogate_key`) would never be found.
 {% enddocs %}

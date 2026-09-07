@@ -3,7 +3,42 @@ version: '1.0.0'
 config-version: 2
 profile: 'dbtae_companion'
 
-require-dbt-version: [">=1.8.0", "<1.9.0"]
+require-dbt-version: [">=1.11.0", "<1.12.0"]
+
+# Behaviour-change flags.
+# Every flag SET below is already mature (defaults to true) at dbt 1.11, so this block changes
+# nothing at runtime — it exists to record the decision explicitly, which is what an upgrade
+# should leave behind. When a flag is introduced but not yet mature, setting it here is how a
+# project opts in early and de-risks the version that makes it the default.
+# https://docs.getdbt.com/reference/global-configs/behavior-changes
+flags:
+  require_generic_test_arguments_property: true
+  source_freshness_run_project_hooks: true
+  require_resource_names_without_spaces: true
+  require_explicit_package_overrides_for_builtin_materializations: true
+  # THE OTHER HALF OF THE LIFECYCLE -- three flags still in the INTRODUCED phase at 1.11.
+  # The four above are MATURE: 1.11 already defaults them to `true`, so setting them changes
+  # nothing and only records the decision. The three below default to `false` at 1.11 and are
+  # scheduled to flip at 1.12. Uncommenting one opts this project into the 1.12 behaviour
+  # today -- which is what the introduced phase is FOR: you move before the upgrade moves
+  # you, one flag at a time, with a run you can revert. Phase three, REMOVED, deletes the old
+  # code path and the flag with it, and then neither value is settable at all.
+  #
+  # They are COMMENTED on purpose. Each has a real runtime effect, and the build line this
+  # repo publishes is measured with all three at their 1.11 default. Uncomment one, re-run,
+  # and watch what moves. All three names are read by dbt 1.11.14 today -- an unrecognised
+  # flag name here is silently ignored, so a typo in this block looks exactly like a flag
+  # that did nothing.
+  #
+  #   # on-run-start hook fails -> selected nodes are marked SKIP instead of being run anyway
+  #   skip_nodes_if_on_run_start_fails: true
+  #   # state:modified compares more configs UNRENDERED, so an env_var that differs between
+  #   # environments stops reporting every node as modified
+  #   state_modified_compare_more_unrendered_values: true
+  #   # a macro's YAML `arguments:` block is checked against its jinja signature at parse
+  #   # time and disagreeing names, counts and types warn. It does NOT check call sites --
+  #   # a bad call is a jinja error with the flag at either value
+  #   validate_macro_args: true
 
 model-paths: ["models"]
 analysis-paths: ["analyses"]
@@ -18,7 +53,15 @@ clean-targets:
   - "logs"
 
 vars:
-  start_date: '2024-01-01'
+  # Project-level vars. Both are read at compile time -- `dbt_project.yml` vars are only a
+  # demo if something actually calls `var()`, so both of these do.
+  #
+  # `start_date` is the first business date the fixture covers (see data-seed/GENERATED.md).
+  # models/marts/fct_orders_microbatch.sql reads it as its `begin`, so re-anchoring the
+  # fixture is a one-line change here rather than an edit inside a model. Override per run
+  # with `dbt run --vars '{start_date: 2026-01-01}'`.
+  start_date: '2025-01-09'
+  # Flip-switch used by the deliberately-failing test in models/marts/_marts__models.yml.
   force_test_fail: false
 
 on-run-start:
@@ -31,6 +74,17 @@ query-comment:
   comment: "{{ query_comment(node) }}"
   append: true
 
+# Macro dispatch search order for the `dbt_utils` namespace.
+#
+# Honest note: this block is REDUNDANT as written. When a package namespace has no
+# `dispatch:` entry, dbt already searches `[<root project>, <namespace>]` -- exactly the
+# order spelled out below. It is kept because it is the config's canonical shape and
+# because it is the line a reader edits when the order needs to change: to put a shim
+# package ahead of the root project, or to insert a third package between them.
+#
+# What actually makes the override win is the macro NAME, not this block: dispatch looks
+# for `postgres__generate_surrogate_key` then `default__generate_surrogate_key`, never
+# `dbtae_companion__generate_surrogate_key`. See macros/generate_surrogate_key.sql.
 dispatch:
   - macro_namespace: dbt_utils
     search_order: ['dbtae_companion', 'dbt_utils']
@@ -43,6 +97,31 @@ models:
     staging:
       +materialized: view
       +tags: ["staging"]
+      # THE THIRD `event_time` SURFACE. `event_time` is settable in exactly three places and
+      # they are interchangeable: inline `{{ config(event_time=...) }}`
+      # (models/staging/stg_orders.sql), a properties `config:` block (the `raw_ecom.orders`
+      # source in models/sources.yml), and here in dbt_project.yml with the `+` prefix. The
+      # properties block and this one both set it from outside the model's SQL; only this
+      # one can set it for a whole folder at once.
+      #
+      # `occurred_at` is the audit log's business timestamp, so the declaration is true, and
+      # the config is not decorative -- it changes compiled SQL. Run:
+      #
+      #   dbt run --select fct_audit_events --sample '3 days'   # exit 0
+      #   cat target/compiled/dbtae_companion/models/marts/fct_audit_events.sql
+      #
+      # and the ref to this model comes back wrapped, not bare:
+      #
+      #   from (select * from "dbtae"."dev"."stg_audit_events"
+      #         where occurred_at >= '...' and occurred_at < '...')
+      #        _dbt_et_filter_subq_stg_audit_events
+      #
+      # Delete the `stg_audit_events:` pair below and the same command returns every row with
+      # no warning -- the failure
+      # mode written up for stg_order_items in models/staging/_staging__models.yml. `--sample`
+      # is a run/build flag only; `dbt compile --sample` exits 2, `No such option`.
+      stg_audit_events:
+        +event_time: occurred_at
     intermediate:
       +materialized: ephemeral
       +tags: ["intermediate"]
@@ -66,7 +145,7 @@ seeds:
 
 snapshots:
   dbtae_companion:
-    +target_schema: snapshots
+    +schema: snapshots
 
 data_tests:
   +severity: error

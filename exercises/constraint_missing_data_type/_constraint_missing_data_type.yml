@@ -1,0 +1,18 @@
+version: 2
+
+models:
+  - name: constraint_missing_data_type
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: product_id
+        data_type: integer
+        constraints:
+          - type: not_null
+      # `price_cents` carries a constraint but no `data_type`. Under an enforced
+      # contract every column must declare its type — the constraint is rendered into
+      # a column definition, and there is nothing to render it onto.
+      - name: price_cents
+        constraints:
+          - type: check
+            expression: "price_cents >= 0"

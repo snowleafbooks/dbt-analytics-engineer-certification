@@ -64,9 +64,7 @@ CREATE TABLE raw_ref.currency_rates (
     loaded_at         TIMESTAMP
 );
 
-INSERT INTO raw_ref.currency_rates (currency_code, usd_per_unit, rate_as_of, loaded_at) VALUES
-    ('USD', 1.000000, '2025-06-01', '2025-06-01 03:30:00'),
-    ('EUR', 1.085000, '2025-06-01', '2025-06-01 03:30:00'),
-    ('GBP', 1.274000, '2025-06-01', '2025-06-01 03:30:00'),
-    ('CAD', 0.732000, '2025-06-01', '2025-06-01 03:30:00'),
-    ('AUD', 0.662000, '2025-06-01', '2025-06-01 03:30:00');
+-- Rows for every raw table, currency_rates included, come from data-seed/*.csv in
+-- 04-load-raw.sql. Nothing here hardcodes a date: the CSVs are cut relative to an anchor
+-- by scripts/generate_data.py, so the fixture stays inside every relative-time window the
+-- project uses. See data-seed/GENERATED.md.

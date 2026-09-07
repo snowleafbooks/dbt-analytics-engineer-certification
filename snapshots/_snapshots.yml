@@ -1,0 +1,30 @@
+version: 2
+
+# A snapshot defined entirely in YAML. Note the trade-off that shapes everything below: a
+# YAML snapshot takes a `relation:`, not a query, so it cannot alias, derive or drop a single
+# column. Whatever the relation exposes is what the snapshot captures.
+#
+# WHY THIS IS AN EXPLICIT `check_cols:` LIST AND NOT `all`.
+# `raw_ecom.product_catalog` carries nine columns. `product_id` is the key and `created_at`
+# never changes; of the remaining seven, two are operational rather than business data --
+# `loaded_at` (when the ETL wrote the row) and `updated_at` (when the source system last
+# touched it) -- and those two are the ones that move on a re-load. Under `check_cols: all`
+# they become change-detection inputs, so a re-load that changes nothing a human would call
+# a change still mints a new SCD2 version. This is not hypothetical in this repo:
+# `scripts/force_stale.sql` and `scripts/restore_freshness.sql` shift `loaded_at` on every
+# raw table, and `scripts/rotate_loaded_at.sql` bumps it on a slice -- run any of those,
+# then `dbt snapshot`, and an `all` snapshot over this relation records a version per
+# touched row. The list below names the five columns whose change is a business fact.
+#
+# The SQL-block form has no such problem, because its SELECT controls the projection --
+# see snapshots/snp_products_check.sql, which is where `check_cols: all` is demonstrated.
+# The two forms sit side by side on purpose: `all` is safe exactly when you own the shape
+# of what you are snapshotting.
+snapshots:
+  - name: snp_products_yaml
+    relation: source('raw_ecom', 'product_catalog')
+    config:
+      schema: snapshots
+      unique_key: product_id
+      strategy: check
+      check_cols: [name, sku, category_id, price_cents, is_active]

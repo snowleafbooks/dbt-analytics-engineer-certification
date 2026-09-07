@@ -1,6 +1,6 @@
 version: 2
 
 models:
-  - name: fct_orders
+  - name: wrong_type_model
     config:
       materialized: true

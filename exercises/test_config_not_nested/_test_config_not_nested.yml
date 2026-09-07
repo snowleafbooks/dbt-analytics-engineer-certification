@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: test_config_model
+    columns:
+      - name: order_id
+        data_tests:
+          # `severity` is a test CONFIG. It belongs under a nested `config:` key:
+          #
+          #   - not_null:
+          #       config:
+          #         severity: warn
+          #
+          # Written as a bare sibling of the test name it still works today -- and dbt
+          # raises PropertyMovedToConfigDeprecation every time it parses this file.
+          - not_null:
+              severity: warn

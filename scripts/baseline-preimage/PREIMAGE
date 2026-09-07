@@ -1,0 +1,16 @@
+# Baseline preimage manifest.
+#
+# Describes the two deliberate deltas between this project as committed (HEAD) and the
+# project state that `scripts/save-baseline.sh --rebase` builds prior-artifacts/ from.
+# Without a delta, state:modified selects nothing and the slim-CI lesson has no subject.
+#
+# Format:  <mode> <TAB> <repo-relative path> <TAB> <sha256 of the HEAD version>
+#
+#   replace   stage baseline-preimage/files/<path> over <path> for the baseline build
+#   remove    delete <path> for the baseline build (so HEAD's copy shows up as state:new)
+#
+# The sha256 is a DRIFT GUARD, not a checksum of the preimage. It pins the HEAD file the
+# preimage was derived from. If someone edits that file and does not re-derive the
+# preimage, --rebase aborts rather than quietly baselining a delta nobody designed.
+replace	models/staging/stg_products.sql	73e93d27150e8666b20d4d36d91240c5053a756f7e00f5ca29738a3a65ce9f55
+remove	tests/assert_large_orders_within_review_tolerance.sql	9b6613ba3d609636ff9a0590d3dedef3f430970de37845d43a680917011941c5

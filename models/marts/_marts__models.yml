@@ -7,7 +7,7 @@ models:
       tags: ["customers"]
     columns:
       - name: customer_pk
-        description: "Surrogate key (inherited from stg_customers)."
+        description: "{{ doc('surrogate_key_convention') }}"
         data_tests: [unique, not_null]
       - name: customer_id
         description: "Natural key."
@@ -19,15 +19,37 @@ models:
         data_tests:
           - not_null
           - relationships:
-              to: ref('country_codes')
-              field: country_code
+              arguments:
+                to: ref('country_codes')
+                field: country_code
       - name: orders_lifetime_count
         data_tests: [not_null]
       - name: orders_lifetime_usd
         data_tests: [not_null]
 
   - name: dim_products
-    description: "Product dimension with contract enforcement. Demonstrates every constraint type supported by Postgres."
+    description: >
+      Product dimension with contract enforcement. Demonstrates four of the five constraint
+      types dbt-postgres declares ENFORCED: `primary_key`, `not_null`, `unique` and `check`.
+      The fifth, `foreign_key`, is on `fct_segment_activity` -- see the note there for why a
+      warehouse-enforced FK only survives on a model rebuilt after its target.
+
+      IT ALSO CARRIES THE SIXTH TYPE, `custom`, on `price_usd`. `custom` is not an
+      enforcement mode; it is the escape hatch. dbt renders the `expression` VERBATIM into
+      the column's DDL slot and makes no attempt to understand it, which is how a Snowflake
+      masking policy or a BigQuery policy tag gets attached to a contracted column. Postgres
+      takes the same slot, so what it demonstrates here is a NAMED check -- something the
+      typed `check` constraint cannot produce, because dbt emits that one unnamed and lets
+      the warehouse autoname it. Both are visible at once. `psql -c "\d+ dev.dim_products"`
+      prints, under `Check constraints:`
+
+        "dim_products__dbt_tmp_price_cents_check"  CHECK (price_cents >= 0)
+        "dim_products_price_usd_nonneg"            CHECK (price_usd >= 0::numeric)
+
+      -- and the first name is worth a second look. Postgres autonamed it after the
+      relation it was created on, which was the `__dbt_tmp` staging table; dbt then renamed
+      the table into place and the constraint name did not follow. A constraint you did not
+      name is a constraint whose name you cannot predict.
     config:
       contract: {enforced: true}
     constraints:
@@ -61,6 +83,11 @@ models:
         data_type: numeric(12, 2)
         constraints:
           - type: not_null
+          # The `custom` escape hatch. Everything after `expression:` is pasted into the
+          # column definition as-is -- dbt neither parses nor validates it, so a typo here
+          # surfaces as a warehouse syntax error at run time, not as a dbt parse error.
+          - type: custom
+            expression: "constraint dim_products_price_usd_nonneg check (price_usd >= 0)"
       - name: is_active
         data_type: boolean
 
@@ -76,7 +103,41 @@ models:
         data_tests: [not_null]
 
   - name: dim_customer_segments
-    description: "Customer segmentation dimension. Two versions in active use; v1 deprecating."
+    description: >
+      Customer segmentation dimension. Two versions in active use; v1 deprecating.
+
+      THE `columns:` BLOCK ABOVE THE `versions:` LIST IS THE SHARED BASE. Every version
+      inherits all of it by default -- a version with no include/exclude element behaves as
+      if it had written `include: '*'`. A version then adds its own columns after the
+      inherited ones, and may drop inherited ones with `exclude:`. Both are used below: v1
+      takes the base whole, v2 takes it minus `segment`, because v2 replaced that single
+      column with `spend_segment` and `recency_segment`.
+
+      THE RULE THAT CATCHES PEOPLE: `exclude` is legal ONLY when `include` is `'*'` or
+      `'all'`. Pairing it with an explicit include LIST is rejected, not ignored. Change v2
+      below to `include: [customer_id]` and keep the `exclude:`, and `dbt parse` exits 2 --
+      but read what it prints, because it does not state the rule:
+
+        Encountered an error:
+        Field "versions" of type Sequence[UnparsedVersion] in UnparsedModelUpdate has
+        invalid value [...]
+        mashumaro.exceptions.InvalidFieldValue: Field "columns" of type
+        Union[IncludeExclude, UnparsedColumn] in UnparsedVersion has invalid value
+        {'include': ['customer_id'], 'exclude': ['segment']}
+
+      dbt 1.11.14 raises the real message -- `exclude can only be specified if include is
+      one of ('all', '*')` -- inside a union type that mashumaro then re-raises as a type
+      failure, so the reason never reaches the terminal. You get a traceback naming the
+      offending block and have to know the rule to read it. Worth knowing before you meet it.
+
+      The restriction itself is less arbitrary than it looks: an explicit include list
+      already says exactly what to keep, so an exclude beside it could only repeat or
+      contradict it. The one combination that adds anything is "everything, minus these".
+
+      The other half is checkable too. Delete the `exclude:` line from v2 and run
+      `dbt run --select dim_customer_segments_v2`: v2 inherits `segment`, and the contract
+      preflight fails with `| segment | | TEXT | missing in definition |` rather than
+      silently building a different table.
     latest_version: 2
     config:
       contract: {enforced: true}
@@ -87,28 +148,36 @@ models:
         constraints:
           - type: not_null
           - type: unique
+      # Base column, inherited by v1 and EXCLUDED by v2.
+      - name: segment
+        description: "Three-tier lifetime-spend band. Superseded by spend_segment in v2."
+        data_type: varchar(10)
+        constraints:
+          - type: not_null
     versions:
       - v: 1
         defined_in: dim_customer_segments_v1
-        deprecation_date: '2025-12-31 00:00:00-00:00'
+        # Kept in the future on purpose. A future date is not silent: dbt already warns
+        # once per downstream `ref()` ("slated for deprecation on ..."). A *past* date adds
+        # a second, project-level warning on every run ("Model dim_customer_segments.v1 has
+        # passed its deprecation date ... This model should be disabled or removed"), and
+        # rewords the first to "was deprecated on". Roll this forward rather than letting it
+        # lapse. To see the post-deprecation wording, set it to a past date and re-parse.
+        deprecation_date: '2027-12-31 00:00:00-00:00'
         columns:
-          - name: customer_id
-            data_type: integer
-            constraints:
-              - type: not_null
-              - type: unique
-          - name: segment
-            data_type: varchar(10)
-            constraints:
-              - type: not_null
+          # The whole base, unchanged: customer_id then segment, in base order. Writing
+          # `include: '*'` explicitly and writing nothing at all are the same thing; it is
+          # spelled out here so the contrast with v2 is on the page.
+          - include: '*'
       - v: 2
         defined_in: dim_customer_segments_v2
         columns:
-          - name: customer_id
-            data_type: integer
-            constraints:
-              - type: not_null
-              - type: unique
+          # The base minus `segment`, then this version's own columns. Inherited columns
+          # always come first and keep base order, so the resulting contract is
+          # customer_id, spend_segment, recency_segment, orders_lifetime_count,
+          # orders_lifetime_usd, latest_order_at -- which is the order the SQL selects in.
+          - include: '*'
+            exclude: [segment]
           - name: spend_segment
             data_type: varchar(10)
             constraints:
@@ -125,70 +194,261 @@ models:
             data_type: timestamp
 
   - name: fct_orders
-    description: "Orders fact table — one row per order. Incremental (delete+insert). Deliberately triggers a failing test when `force_test_fail` var is true."
+    description: >
+      Orders fact table — one row per order that has actually happened. Incremental
+      (delete+insert).
+
+      This is the mart boundary, and it is where a business rule is applied: the raw feed
+      carries scheduled and pre-ordered rows whose `created_at` is in the future, and this
+      model excludes them (`created_at <= current_timestamp`). `stg_orders` upstream keeps
+      every row — staging renames and recasts, the mart decides what counts. The singular
+      test `assert_no_future_orders` asserts the rule holds here.
+
+      A consequence worth knowing before you compare two runs: this relation's row count
+      grows with wall-clock time as scheduled orders mature into real ones. It is not a
+      fixed number.
+
+      Deliberately triggers a failing test when the `force_test_fail` var is true.
     config:
       tags: ["daily", "critical"]
     columns:
       - name: order_id
         description: "Primary key."
         data_tests: [unique, not_null]
+      - name: created_at
+        description: >
+          When the order was placed. Never later than the moment this model was built —
+          future-dated (scheduled) orders are filtered out at this boundary. See
+          `stg_orders` for the unfiltered feed.
       - name: customer_id
         data_tests:
           - not_null
           - relationships:
-              to: ref('dim_customers')
-              field: customer_id
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
       - name: status
+        description: "{{ doc('order_status') }}"
         data_tests:
           - not_null
           - accepted_values:
-              values: ['pending', 'paid', 'shipped', 'delivered', 'refunded', 'cancelled']
+              arguments:
+                values: ['pending', 'paid', 'shipped', 'delivered', 'refunded', 'cancelled']
               config:
                 severity: warn
       - name: order_total_usd
         data_tests:
           - not_null
           - value_in_range:
-              min_value: 0
-              max_value: 100000
+              arguments:
+                min_value: 0
+                max_value: 100000
       - name: updated_at
+        description: "Last change to the order row at source."
         data_tests:
+          # `where` scopes the test to the recent slice rather than the whole history —
+          # the pattern for keeping an expensive assertion cheap on a growing fact table.
           - not_null:
               config:
                 where: "created_at >= current_date - interval '90 days'"
     data_tests:
       - dbt_utils.expression_is_true:
-          expression: "order_total_cents = order_total * 100"
+          arguments:
+            expression: "order_total_cents = order_total * 100"
           config:
             severity: warn
       # Flip-switch test: only runs when {{ var('force_test_fail') }} is true
       - dbt_utils.expression_is_true:
-          expression: "1 = 0"
+          arguments:
+            expression: "1 = 0"
           config:
             enabled: "{{ var('force_test_fail', false) }}"
             severity: error
 
   - name: fct_order_items
-    description: "Line-level fact. Incremental merge. Composite key."
+    description: >
+      Line-level fact, one row per (order_id, line_no). Incremental `merge`, composite
+      unique key.
+
+      Applies the same future-order rule as `fct_orders`: a line is only a fact once its
+      order has actually happened, so the two marts share one cut-off and a scheduled
+      order's lines do not appear here ahead of the order itself.
+
+      Contracted, which is worth seeing on an *incremental* model: dbt refuses the
+      combination of a contract with `on_schema_change` set to `sync_all_columns` or
+      `ignore`, so this model runs `fail`. See the model file for why that refusal is
+      right.
+
+      A `foreign_key` constraint to `dim_products` was tried here and deliberately moved.
+      dbt-postgres drops a table model with `drop table ... cascade`, so every ordinary run
+      that rebuilds `dim_products` also drops any FK pointing at it -- and because this
+      model is incremental, it is not recreated afterwards, so the constraint would be
+      present after `--full-refresh` and silently gone after the next plain build. The FK
+      lives on `fct_segment_activity` instead, which is a table rebuilt after its own FK
+      target on every run. The `relationships` test below covers the same invariant here,
+      and covers it durably.
+    config:
+      contract: {enforced: true}
     columns:
       - name: order_id
+        description: "Order this line belongs to. Half of the composite grain."
+        data_type: integer
+        constraints:
+          - type: not_null
         data_tests: [not_null]
       - name: line_no
+        description: "Line number within the order. The other half of the grain."
+        data_type: integer
+        constraints:
+          - type: not_null
         data_tests: [not_null]
+      - name: customer_id
+        description: "Denormalised from the parent order for line-level slicing."
+        data_type: integer
       - name: product_id
+        description: "Product sold on this line."
+        data_type: integer
+        constraints:
+          - type: not_null
         data_tests:
           - not_null
           - relationships:
-              to: ref('dim_products')
-              field: product_id
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+      - name: product_name
+        description: "Product name as of the build, joined from the product dimension."
+        data_type: varchar(120)
+      - name: category_id
+        description: "Product category key."
+        data_type: integer
+      - name: quantity
+        description: "Units sold on this line."
+        data_type: integer
+      - name: unit_price_cents
+        description: "Price per unit in minor units, as carried at source."
+        data_type: integer
+      - name: unit_price_usd
+        description: "Price per unit in USD, via the cents_to_dollars macro."
+        data_type: numeric
+      - name: line_total_cents
+        description: "quantity * unit_price_cents."
+        data_type: integer
+      - name: line_total_usd
+        description: "Line total in USD."
+        data_type: numeric
+      - name: currency
+        description: "Currency of the parent order."
+        data_type: varchar(3)
+      - name: order_created_at
+        description: "When the parent order was placed. Never later than the build moment."
+        data_type: timestamp
+      - name: order_updated_at
+        description: "Last change to the parent order at source; drives the incremental predicate."
+        data_type: timestamp
+      - name: loaded_at
+        description: "When the line landed in the warehouse."
+        data_type: timestamp
+
+  - name: fct_orders_microbatch
+    description: >
+      The same order stream as `fct_orders`, materialised by the `microbatch` incremental
+      strategy instead of `delete+insert` -- the two exist side by side so the strategies can
+      be compared on identical input (see `analyses/compare_fct_orders_versions.sql`).
+
+      dbt splits the run into one batch per calendar month from `begin` (which reads
+      `var('start_date')`) up to the current month, and filters `stg_orders` for each batch
+      using the `event_time` declared there. There is no `is_incremental()` guard and no
+      hand-written WHERE clause in the model; that is the whole point of the strategy.
+
+      On dbt-postgres each batch is executed as a MERGE, which is why `unique_key` is
+      mandatory here and why Postgres 15+ is required.
+
+      Two consequences worth knowing before comparing runs. First, batches run to the end
+      of the current BATCH PERIOD, not to the current instant: with `batch_size='month'`
+      this model already carries the fixture's forward-dated orders that fall inside this
+      calendar month, and none of the ones dated into a later month. Second, the row count
+      therefore grows with wall-clock time, a month's worth at a time. It is not a fixed
+      number, and it does not match `fct_orders` exactly -- `fct_orders` cuts at the current
+      instant, this model cuts at the end of the current month's batch. That gap is what
+      `analyses/compare_fct_orders_versions.sql` measures.
+    config:
+      tags: ["microbatch"]
+    columns:
+      - name: order_id
+        description: "Primary key, and the `unique_key` each batch merges on."
+        data_tests: [unique, not_null]
+      - name: order_created_at
+        description: >
+          When the order was placed. This is the model's `event_time` column -- the value
+          dbt uses to assign a row to a batch.
+        data_tests: [not_null]
+      - name: customer_id
+        description: "Customer who placed the order."
+      - name: status
+        description: "{{ doc('order_status') }}"
+      - name: currency
+        description: "ISO 4217 currency the order was priced in."
+      - name: order_total
+        description: "Order total in the order's own currency, converted from minor units."
 
   - name: fct_daily_sales
-    description: "Daily sales rollup."
+    description: >
+      Daily sales rollup.
+
+      IT ALSO CARRIES A CONSTRAINT THAT DOES NOTHING, AND THAT IS THE POINT. `revenue_usd`
+      below declares a `data_type` and a `not_null` CONSTRAINT, and this model has no
+      `contract:` block. Constraints reach the warehouse only under
+      `contract: {enforced: true}`; without one dbt parses the block, carries it in the
+      manifest, and emits no DDL. No error, no warning, no log line -- dbt does not even
+      validate the constraint, because the validation that would reject a bad one runs
+      only when a contract is enforced.
+
+      The silence is the danger. A reviewer reading this YAML would say `revenue_usd`
+      cannot be null; the warehouse says otherwise. Because the evidence is an absence,
+      check it directly rather than trusting the run:
+
+        dbt build --select fct_daily_sales     # exit 0, WARN=0
+        psql -c "\d dev.fct_daily_sales"       # revenue_usd: Nullable is blank
+
+      Compare `dim_products`, where the identical `not_null` under an enforced contract
+      does print `not null`. Turning the contract on here would make this constraint bite,
+      but not in one step, and the first thing that stops you is not the constraint.
+      Measured, in order: `dbt parse` exits 2 with `Invalid value for on_schema_change:
+      ignore. Models materialized as incremental with contracts enabled must set
+      on_schema_change to 'append_new_columns' or 'fail'` -- this model is incremental and
+      sets `ignore`, so the contract is refused before a single column is looked at. That
+      is the same refusal `fct_order_items` documents from the other side. Set
+      `on_schema_change='fail'` and the run then stops with `Contracted models require
+      data_type to be defined for each column ... for the ['sales_day'] column(s)` -- it
+      names only the column that is declared here without a type; `orders_count`,
+      `unique_customers` and `source_built_at` are not in this YAML at all and are a separate
+      argument. That
+      chain is the trade the config is asking for.
     columns:
       - name: sales_day
         data_tests: [unique, not_null]
       - name: revenue_usd
+        # Inert: no contract on this model, so neither line below reaches the DDL.
+        data_type: numeric
+        constraints:
+          - type: not_null
         data_tests: [not_null]
+      - name: source_built_at
+        description: >
+          The high-water mark this model advances on itself: the newest `fct_orders.dbt_updated_at`
+          among the orders that make up this day. The incremental predicate rebuilds every day
+          holding a parent row written since the largest value here, which is how a correction to
+          an eighteen-month-old order still reaches its day. Carrying the mark in the TARGET rather
+          than taking `max(fct_orders.dbt_updated_at)` at run time is what survives an unusual run
+          order -- build `fct_orders` twice without building this model in between and a run-time
+          max sees only the second generation, losing the day the first one touched.
+
+          New as of 2026-09-06. `on_schema_change: ignore` above means an already-built table does
+          not grow this column on an incremental run; `dbt run --select fct_daily_sales
+          --full-refresh` once is the whole migration. No test is declared on it deliberately: it
+          is machinery, not a fact about the business, and a `not_null` here would assert nothing
+          that the model's own predicate does not already require.
 
   - name: fct_audit_events
     description: "Append-only audit events. Incremental append strategy."
@@ -197,17 +457,71 @@ models:
         data_tests: [unique, not_null]
 
   - name: fct_segment_activity
-    description: "Consumes dim_customer_segments v=1 — demonstrates versioned ref()."
+    description: >
+      Consumes `dim_customer_segments` v=1 — demonstrates a versioned `ref()`, and carries
+      the project's `foreign_key` constraint.
+
+      THE FOREIGN KEY. `customer_id` references `dim_customer_segments` v1, declared with
+      `to:` / `to_columns:` — the form that takes a `ref()` (a `source()` works too) instead
+      of a hardcoded relation name. Two things follow from using a `ref()`: dbt resolves the
+      target to the right database and schema for whichever target you run against, and the
+      reference becomes a real DAG edge, so dbt cannot build this model before the relation
+      it points at. Postgres enforces the constraint in the DDL, so an orphan row is
+      rejected at insert time rather than reported after the fact by a test.
+
+      WHY THIS MODEL AND NOT A FACT TABLE. dbt-postgres drops a table model with
+      `drop table ... cascade`, which also drops every foreign key pointing at it. A
+      constraint therefore only survives if the model that declares it is itself rebuilt
+      after its target. That holds on any build that contains both — this model and
+      `dim_customer_segments` v1 are both tables and the FK edge orders them — and it does
+      not hold for an incremental fact table, which is rebuilt only on `--full-refresh`.
+      This is the real constraint on warehouse-enforced FKs under dbt, and it is why the
+      equivalent `fct_order_items` → `dim_products` relationship is expressed as a
+      `relationships` test instead.
+
+      SO THE CONSTRAINT IS TRANSIENT, AND THAT IS WORTH SEEING. Rebuild the target on its
+      own — `dbt run --select dim_customer_segments_v1` — and the cascade takes the FK
+      with it: `select count(*) from pg_constraint where contype = 'f' and connamespace =
+      'dev'::regnamespace` drops from 1 to 0, with no error and no warning.
+      `dbt build --select fct_segment_activity` puts it back. A
+      warehouse-enforced FK under dbt is only ever as durable as the last run that touched
+      the model declaring it.
     config:
       group: marketing
+      contract: {enforced: true}
     columns:
       - name: customer_id
+        description: "Customer, constrained to exist in dim_customer_segments v1."
+        data_type: integer
+        constraints:
+          - type: not_null
+          - type: foreign_key
+            to: ref('dim_customer_segments', v=1)
+            to_columns: [customer_id]
         data_tests: [unique, not_null]
+      - name: segment
+        description: "Spend segment carried over from the v1 segmentation."
+        data_type: varchar(10)
+      - name: recent_orders
+        description: "Count of the customer's orders in the last 30 days; 0 when there are none."
+        data_type: bigint
 
-# Unit tests (dbt 1.8+) — assertion on the model's SQL logic with mock rows.
+# Unit tests — assertions on a model's SQL logic against mock inputs, so they run
+# without touching warehouse data. Note `overrides.macros.is_incremental: false`:
+# it pins which branch of the model compiles. The mock `created_at` values are in
+# the past, so they survive the mart's future-order filter.
+#
+# The two tests below are written in the two available shapes on purpose. The first
+# references CSV FIXTURE FILES under tests/fixtures/ (`fixture:` names the file without its
+# .csv extension); the second holds its rows INLINE (`rows:`). Fixture files are the right
+# choice once a mock outgrows a few rows or is shared between tests -- they diff cleanly and
+# open in a spreadsheet. Inline rows keep a small case readable in one place.
 unit_tests:
   - name: test_fct_orders_usd_conversion
-    description: "Verify that a 100-unit EUR order is correctly converted using the fixture rate."
+    description: >
+      Verify that a 100-unit EUR order is correctly converted using the fixture rate.
+      Written in the fixture-file form: every `given` input and the `expect` block names a
+      CSV under tests/fixtures/.
     model: fct_orders
     overrides:
       macros:
@@ -215,27 +529,22 @@ unit_tests:
     given:
       - input: ref('stg_orders')
         format: csv
-        rows: |
-          order_id,customer_id,status,currency,order_total_cents,order_total,created_at,updated_at,loaded_at
-          9001,1,paid,EUR,10000,100.00,2025-06-01 10:00:00,2025-06-01 10:00:00,2025-06-01 10:00:00
+        fixture: unit_stg_orders_eur
       - input: ref('dim_customers')
         format: csv
-        rows: |
-          customer_id,country_code,country_name
-          1,DE,Germany
+        fixture: unit_dim_customers_de
       - input: ref('stg_currency_rates')
         format: csv
-        rows: |
-          currency_code,usd_per_unit
-          EUR,1.10
+        fixture: unit_stg_currency_rates_eur
     expect:
       format: csv
-      rows: |
-        order_id,order_total_usd
-        9001,110.00
+      fixture: unit_fct_orders_usd_expected
 
   - name: test_fct_orders_no_rate_match_defaults_to_one
-    description: "When the currency has no rate match, multiplication falls back to 1.0."
+    description: >
+      When the currency has no rate match, multiplication falls back to 1.0. Written in the
+      inline form, so both shapes are visible in one file. Note the empty rate input: a
+      header row with no data rows is how you mock "this relation is empty".
     model: fct_orders
     overrides:
       macros:

@@ -1,4 +1,17 @@
-{# Version 2 — adds recency dimension to the segmentation. #}
+{#
+    Version 2 -- adds a recency dimension to the segmentation.
+
+    `latest_order_at` comes from dim_customers, whose lifetime aggregates apply the
+    future-order rule, so the bands below are measured against orders that have actually
+    happened. That matters here more than anywhere else in the project: the fixture carries
+    scheduled orders up to two years out, and if those counted, essentially every customer
+    would band as `active` and the two other bands would be empty. A recency segment
+    computed off an unfiltered order feed is a classic silently-wrong metric.
+
+    A customer with no realised orders has a NULL `latest_order_at` and falls to `inactive`
+    through the `else` branch -- deliberate, since "never ordered" is the most inactive
+    state there is.
+#}
 with customers as (
     select * from {{ ref('dim_customers') }}
 ),

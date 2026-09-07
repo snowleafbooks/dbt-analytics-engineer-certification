@@ -2,6 +2,8 @@ target/
 dbt_packages/
 logs/
 prior-artifacts/
+prior-artifacts.incoming/
+prior-artifacts.previous/
 .venv/
 .env
 .dbt/

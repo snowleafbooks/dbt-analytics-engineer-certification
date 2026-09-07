@@ -1,7 +1,7 @@
 version: 2
 
 models:
-  - name: fct_orders
+  - name: unknown_key_model
     frobulate: enthusiastically
     columns:
       - name: order_id

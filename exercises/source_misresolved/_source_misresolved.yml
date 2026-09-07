@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  # No `schema:` property. dbt defaults a source's schema to the source NAME, so this
+  # resolves to `<target database>.ecom_landing.orders` — a relation that does not exist.
+  # The rows are in `raw_ecom.orders`.
+  - name: ecom_landing
+    tables:
+      - name: orders
