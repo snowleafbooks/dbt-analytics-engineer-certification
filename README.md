@@ -2,13 +2,13 @@
 
 > ### 📘 Studied from the dbt 1.7 material? Download the free 1.7 → 1.11 delta booklet
 >
-> **[dbt-analytics-engineer-1.7-to-1.11-delta.pdf](../../releases/latest)** — 93 pages
+> **[⬇ Download dbt-analytics-engineer-1.7-to-1.11-delta.pdf](../../releases/latest/download/dbt-analytics-engineer-1.7-to-1.11-delta.pdf)** — 93 pages
 > covering everything the study guide changed between dbt Core 1.7 and 1.11: the five new Topic 1
 > bullets, microbatch and `--sample`, YAML constraints, the behaviour-change flags and
 > deprecations, freshness and state, and 64 practice questions with worked answers.
 >
-> Grab it from the [latest release](../../releases/latest). Nothing in it is repeated from the
-> 1.7 material — it is the delta only.
+> Direct download, no sign-in needed — or browse the [latest release](../../releases/latest).
+> Nothing in it is repeated from the 1.7 material — it is the delta only.
 
 
 > A runnable dbt 1.11 project on Postgres that exercises the exam patterns that translate to a local warehouse — sources, materializations (including microbatch), snapshots (SQL-block and YAML), tests (including unit tests), macros, packages, documentation, governance, contracts, grants, state/defer, and slim CI. Click *Reopen in Container*, run three commands, and your terminal reads `Done. PASS=117 WARN=0 ERROR=0 SKIP=0 NO-OP=3 TOTAL=120`. The handful of things the exam names that genuinely cannot run on Postgres — Python models and true zero-copy clones among them — are called out rather than faked; see [*What this repo can't demonstrate*](#what-this-repo-cant-demonstrate).
